@@ -18,12 +18,12 @@ const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
 unsigned int vao[1];
-unsigned int gbo[1];
+unsigned int gbo[2];
 
 const int nPoint = 192741;
 vector<float> position;
 vector<float> concentration;
-int* cluster;
+vector<int> cluster;
 
 void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	cnpy::NpyArray arr = cnpy::npy_load(file_raw);
@@ -39,7 +39,9 @@ void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	}
 
 	cnpy::NpyArray arr_cluster = cnpy::npy_load(file_cluster);
-	cluster = arr_cluster.data<int>();
+	cluster.resize(nPoint);
+	int* pCluster = cluster.data();
+	pCluster = arr_cluster.data<int>();
 }
 
 void initBuffers() {
@@ -49,13 +51,17 @@ void initBuffers() {
 	glBindVertexArray(vao[0]);
 
 	unsigned int positionDat = gbo[0];
+	unsigned int clusterDat = gbo[1];
 
 	glBindBuffer(GL_ARRAY_BUFFER, positionDat);
 	glBufferData(GL_ARRAY_BUFFER, nPoint * sizeof(float) * 3, &position[0], GL_STATIC_DRAW);
-
-	// position attribute
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
+
+	glBindBuffer(GL_ARRAY_BUFFER, clusterDat);
+	glBufferData(GL_ARRAY_BUFFER, nPoint * sizeof(int), &cluster[0], GL_STATIC_DRAW);
+	glVertexAttribIPointer(1, 1, GL_INT, sizeof(int), 0);
+	glEnableVertexAttribArray(1);
 
 	// You can unbind the VAO afterwards so other VAO calls won't accidentally modify this VAO, but this rarely happens. Modifying other
 	// VAOs requires a call to glBindVertexArray anyways so we generally don't unbind VAOs (nor VBOs) when it's not directly necessary.

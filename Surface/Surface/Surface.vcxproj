@@ -122,16 +122,21 @@
   <ItemGroup>
     <ClCompile Include="cnpy.cpp" />
     <ClCompile Include="glad.c" />
+    <ClCompile Include="GridPoint.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="Volume.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cnpy.h" />
+    <ClInclude Include="GridPoint.h" />
     <ClInclude Include="kd_tree.hpp" />
+    <ClInclude Include="marching_cubes.h" />
     <ClInclude Include="nanoflann.hpp" />
     <ClInclude Include="point_cloud.hpp" />
     <ClInclude Include="point_type.hpp" />
     <ClInclude Include="shader.h" />
     <ClInclude Include="static_kd_tree_3d.hpp" />
+    <ClInclude Include="Volume.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shader.fs" />

@@ -27,6 +27,12 @@
     <ClCompile Include="glad.c">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="GridPoint.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Volume.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cnpy.h">
@@ -48,6 +54,15 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="static_kd_tree_3d.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GridPoint.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="marching_cubes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Volume.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

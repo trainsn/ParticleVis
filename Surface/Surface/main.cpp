@@ -31,7 +31,7 @@ glm::mat4 pMatrix;
 glm::mat4 mvMatrix;
 
 // Information related to the camera 
-float dist = 3.0f;
+float dist = 30.0f;
 float theta, phi;
 glm::vec3 direction;
 glm::vec3 up;
@@ -57,9 +57,9 @@ vector<float> position;
 vector<float> concentration;
 vector<int> cluster;
 
-const float boarder = 0.01f;
+const float boarder = 0.1f;
 const int scale = 128;
-float xmin = 1.0f, xmax = -1.0f, ymin = 1.0f, ymax = -1.0f, zmin = 1.0f, zmax = -1.0f;
+float xmin = 10.0f, xmax = -10.0f, ymin = 10.0f, ymax = -10.0f, zmin = 10.0f, zmax = -10.0f;
 int w, h, d;
 
 kdtree::StaticKdTree3d<point_type::Point3f, point_cloud::PointCloud> kd_tree_3d;
@@ -72,9 +72,9 @@ void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	position.resize(nPoint * 3);
 	concentration.resize(nPoint);
 	for (int i = 0; i < nPoint; i++) {
-		position[i * 3] = loaded[i * 7] / 10.0f;
-		position[i * 3 + 1] = loaded[i * 7 + 1] / 10.0f;
-		position[i * 3 + 2] = (loaded[i * 7 + 2] - 5.0f) / 10.0f;
+		position[i * 3] = loaded[i * 7];
+		position[i * 3 + 1] = loaded[i * 7 + 1];
+		position[i * 3 + 2] = (loaded[i * 7 + 2] - 5.0f);
 		concentration[i] = loaded[i * 7 + 3];
 	}
 
@@ -125,15 +125,24 @@ void initVol() {
 	h = (int)(t * (ymax - ymin) + 0.5);
 	d = (int)(t * (zmax - zmin) + 0.5);
 
-	point_type::Point3f point_to_search(0.0f, 0.0f, 0.0f);
-	vector<int> indices;
-	vector<float> squared_distances;
+	for (int k = 0; k < d; k++) {
+		for (int j = 0; j < h; j++) {
+			for (int i = 0; i < w; i++) {
+				float x = xmin + i * (xmax - xmin) / w;
+				float y = ymin + j * (ymax - ymin) / h;
+				float z = zmin + k * (zmax - zmin) / d;
+				point_type::Point3f point_to_search(x, y, z);
+				vector<int> indices;
+				vector<float> squared_distances;
 
-	int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
-	std::cout << "Find: " << num_3d << " points," << std::endl;
-	for (int i = 0; i < num_3d; i++) {
-		std::cout << "Point " << i << ": " << kd_tree_3d[indices[i]];
-		std::cout << ", Distance: " << sqrt(squared_distances[i]) << std::endl;
+				//int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
+				//std::cout << "Find: " << num_3d << " points," << std::endl;
+				//for (int t = 0; t < num_3d; t++) {
+				//	std::cout << "Point " << t << ": " << kd_tree_3d[indices[t]];
+				//	std::cout << ", Distance: " << sqrt(squared_distances[t]) << std::endl;
+				//}
+			}
+		}
 	}
 }
 
@@ -222,8 +231,8 @@ int main()
 		time_last = time_now;
 		
 		// create the projection matrix 
-		float near = 0.1f;
-		float far = 5.0f;
+		float near = 1.0f;
+		float far = 50.0f;
 		float fov_r = 30.0f;
 
 		pMatrix = glm::perspective(fov_r, (float)SCR_WIDTH / (float)SCR_HEIGHT, near, far);

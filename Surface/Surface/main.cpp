@@ -10,9 +10,14 @@
 #include"cnpy.h"
 #include<cstdlib>
 #include<iostream>
+#include <math.h>
 #include<string>
 
 #include "shader.h"
+
+#include "static_kd_tree_3d.hpp"
+#include "point_cloud.hpp"
+#include "point_type.hpp"
 using namespace std;
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
@@ -36,13 +41,29 @@ glm::vec3 eye;
 glm::mat4 view;
 glm::mat4 model;
 
+// Used for time based animation.
+float time_last = 0;
+
+// Used to rotate the isosurface.
+float rotation_radians = 0.0;
+float rotation_radians_step = 0.2 * 180 / M_PI;
+
 unsigned int vao[1];
 unsigned int gbo[2];
 
 const int nPoint = 192741;
+const int target_cluster = 2;
 vector<float> position;
 vector<float> concentration;
 vector<int> cluster;
+
+const float boarder = 0.01f;
+const int scale = 128;
+float xmin = 1.0f, xmax = -1.0f, ymin = 1.0f, ymax = -1.0f, zmin = 1.0f, zmax = -1.0f;
+int w, h, d;
+
+kdtree::StaticKdTree3d<point_type::Point3f, point_cloud::PointCloud> kd_tree_3d;
+vector<int> indexToPointID;
 
 void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	cnpy::NpyArray arr = cnpy::npy_load(file_raw);
@@ -62,6 +83,58 @@ void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	int* loaded_cluster = arr_cluster.data<int>();
 	for (int i = 0; i < nPoint; i++)
 		cluster[i] = loaded_cluster[i];
+
+	for (int i = 0; i < nPoint; i++) {
+		if (cluster[i] == target_cluster) {
+			if (position[i * 3] < xmin)
+				xmin = position[i * 3];
+			if (position[i * 3] > xmax)
+				xmax = position[i * 3];
+			if (position[i * 3 + 1] < ymin)
+				ymin = position[i * 3 + 1];
+			if (position[i * 3 + 1] > ymax)
+				ymax = position[i * 3 + 1];
+			if (position[i * 3 + 2] < zmin)
+				zmin = position[i * 3 + 2];
+			if (position[i * 3 + 2] > zmax)
+				zmax = position[i * 3 + 2];
+		}
+	}
+	xmin -= boarder;
+	xmax += boarder;
+	ymin -= boarder;
+	ymax += boarder;
+	zmin -= boarder;
+	zmax += boarder;
+
+	// build KD-tree
+	for (int i = 0; i < nPoint; i++) {
+		float xPos = position[i * 3];
+		float yPos = position[i * 3 + 1];
+		float zPos = position[i * 3 + 2];
+		if ((xPos > xmin) && (xPos < xmax) && (yPos > ymin) && (yPos < ymax) && (zPos > zmin) && (zPos < zmax)){
+			kd_tree_3d.add(point_type::Point3f(xPos, yPos, zPos));
+		}
+	}
+	kd_tree_3d.build();
+}
+
+void initVol() {
+	float t = pow((float)(scale * scale * scale) / (xmax - xmin) / (ymax - ymin) / (zmax - zmin), 1.0f / 3.0f);
+	w = (int)(t * (xmax - xmin) + 0.5);
+	h = (int)(t * (ymax - ymin) + 0.5);
+	d = (int)(t * (zmax - zmin) + 0.5);
+
+	point_type::Point3f point_to_search(0.0f, 0.0f, 0.0f);
+	vector<int> indices;
+	vector<float> squared_distances;
+
+	int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
+	std::cout << "Find: " << num_3d << " points," << std::endl;
+	for (int i = 0; i < num_3d; i++) {
+		std::cout << "Point " << i << ": " << kd_tree_3d[indices[i]];
+		std::cout << ", Distance: " << sqrt(squared_distances[i]) << std::endl;
+	}
 }
 
 void initBuffers() {
@@ -91,6 +164,7 @@ void initBuffers() {
 int main()
 {
 	loadPointsFromNpy("run41_025.npy", "run41_025_cluster.npy");
+	initVol();
 
 	// glfw: initialize and configure
 	// ------------------------------
@@ -137,6 +211,16 @@ int main()
 	// -----------
 	while (!glfwWindowShouldClose(window))
 	{
+		float time_now = glfwGetTime();
+		if (time_last != 0) {
+			float time_delta = (time_now - time_last);
+
+			rotation_radians += rotation_radians_step * time_delta;
+			if (rotation_radians > 360)
+				rotation_radians = 0.0;
+		}
+		time_last = time_now;
+		
 		// create the projection matrix 
 		float near = 0.1f;
 		float far = 5.0f;
@@ -157,6 +241,7 @@ int main()
 
 		view = glm::lookAt(eye, center, up);
 		model = glm::mat4(1.0f);
+		model *= glm::rotate(rotation_radians, glm::vec3(0.0f, 0.0f, 1.0f));
 
 		mvMatrix = view * model;
 		

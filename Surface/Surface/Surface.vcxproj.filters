@@ -35,6 +35,21 @@
     <ClInclude Include="shader.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="kd_tree.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="nanoflann.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="point_cloud.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="point_type.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="static_kd_tree_3d.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="shader.fs">

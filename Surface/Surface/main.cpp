@@ -2,6 +2,11 @@
 #include <GLFW/glfw3.h>
 #define _USE_MATH_DEFINES
 
+#include <GL/glm/glm.hpp>
+#include <GL/glm/gtc/matrix_transform.hpp>
+#include <GL/glm/gtc/type_ptr.hpp>
+#include <GL/glm/gtx/transform2.hpp>
+
 #include"cnpy.h"
 #include<cstdlib>
 #include<iostream>
@@ -15,7 +20,21 @@ void processInput(GLFWwindow *window);
 
 // settings
 const unsigned int SCR_WIDTH = 800;
-const unsigned int SCR_HEIGHT = 600;
+const unsigned int SCR_HEIGHT = 800;
+
+glm::mat4 pMatrix;
+glm::mat4 mvMatrix;
+
+// Information related to the camera 
+float dist = 3.0f;
+float theta, phi;
+glm::vec3 direction;
+glm::vec3 up;
+glm::vec3 center;
+glm::vec3 eye;
+
+glm::mat4 view;
+glm::mat4 model;
 
 unsigned int vao[1];
 unsigned int gbo[2];
@@ -32,21 +51,22 @@ void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	position.resize(nPoint * 3);
 	concentration.resize(nPoint);
 	for (int i = 0; i < nPoint; i++) {
-		position[i * 3] = loaded[i * 7];
-		position[i * 3 + 1] = loaded[i * 7 + 1];
-		position[i * 3 + 2] = loaded[i * 7 + 2];
+		position[i * 3] = loaded[i * 7] / 10.0f;
+		position[i * 3 + 1] = loaded[i * 7 + 1] / 10.0f;
+		position[i * 3 + 2] = (loaded[i * 7 + 2] - 5.0f) / 10.0f;
 		concentration[i] = loaded[i * 7 + 3];
 	}
 
 	cnpy::NpyArray arr_cluster = cnpy::npy_load(file_cluster);
 	cluster.resize(nPoint);
-	int* pCluster = cluster.data();
-	pCluster = arr_cluster.data<int>();
+	int* loaded_cluster = arr_cluster.data<int>();
+	for (int i = 0; i < nPoint; i++)
+		cluster[i] = loaded_cluster[i];
 }
 
 void initBuffers() {
 	glGenVertexArrays(1, vao);
-	glGenBuffers(1, gbo);
+	glGenBuffers(2, gbo);
 	// bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
 	glBindVertexArray(vao[0]);
 
@@ -117,17 +137,43 @@ int main()
 	// -----------
 	while (!glfwWindowShouldClose(window))
 	{
+		// create the projection matrix 
+		float near = 0.1f;
+		float far = 5.0f;
+		float fov_r = 30.0f;
+
+		pMatrix = glm::perspective(fov_r, (float)SCR_WIDTH / (float)SCR_HEIGHT, near, far);
+
+		// Move to the 3D space origin.
+		mvMatrix = glm::mat4(1.0f);
+
+		// transform 
+		theta = M_PI / 2;
+		phi = 0.0f;
+		direction = glm::vec3(sin(theta) * cos(phi) * dist, sin(theta) * sin(phi) * dist, cos(theta) * dist);
+		up = glm::vec3(sin(theta - M_PI / 2) * cos(phi), sin(theta - M_PI / 2) * sin(phi), cos(theta - M_PI / 2));
+		center = glm::vec3(0.0f, 0.0f, 0.0f);
+		eye = center + direction;
+
+		view = glm::lookAt(eye, center, up);
+		model = glm::mat4(1.0f);
+
+		mvMatrix = view * model;
+		
 		// input
 		// -----
 		processInput(window);
 
 		// render
 		// ------
-		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-		// render the triangle
 		ourShader.use();
+
+		// Pass the vertex shader the projection matrix and the model-view matrix.
+		ourShader.setMat4("uMVMatrix", mvMatrix);
+		ourShader.setMat4("uPMatrix", pMatrix);
+
 		glBindVertexArray(vao[0]);
 		glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
 		glDrawArrays(GL_POINTS, 0, nPoint);

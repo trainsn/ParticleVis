@@ -4,16 +4,20 @@ layout (location = 1) in int cluster_id;
 
 out vec3 ourColor;
 
+//3D transformation matrices
+uniform mat4 uMVMatrix;
+uniform mat4 uPMatrix;
+
 void main()
 {
-    gl_Position = vec4(aPos, 1.0);
-	gl_PointSize = 10.0f;
+    gl_Position = uPMatrix * uMVMatrix * vec4(aPos, 1.0);
+	gl_PointSize = 0.1f;
 	if (cluster_id == 0)
+		ourColor = vec3(1.0f, 1.0f, 1.0f);
+	if (cluster_id == 1)
 		ourColor = vec3(1.0f, 0.0f, 0.0f);
-	else if (cluster_id == 1)
+	if (cluster_id == 2)
 		ourColor = vec3(0.0f, 1.0f, 0.0f);
-	else if (cluster_id == 2)
+	if (cluster_id == 3)
 		ourColor = vec3(0.0f, 0.0f, 1.0f);
-	else if (cluster_id == 3)
-		ourColor = vec3(1.0f);
 }

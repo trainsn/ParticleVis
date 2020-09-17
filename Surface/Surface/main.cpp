@@ -14,6 +14,9 @@
 #include<string>
 
 #include "shader.h"
+#include "Volume.h"
+#include "GridPoint.h"
+#include "marching_cubes.h"
 
 #include "static_kd_tree_3d.hpp"
 #include "point_cloud.hpp"
@@ -48,8 +51,8 @@ float time_last = 0;
 float rotation_radians = 0.0;
 float rotation_radians_step = 0.2 * 180 / M_PI;
 
-unsigned int vao[1];
-unsigned int gbo[2];
+unsigned int pointVAO[1];
+unsigned int pointVBO[2];
 
 const int nPoint = 192741;
 const int target_cluster = 2;
@@ -64,6 +67,25 @@ int w, h, d;
 
 kdtree::StaticKdTree3d<point_type::Point3f, point_cloud::PointCloud> kd_tree_3d;
 vector<int> indexToPointID;
+
+const float eps = 0.00001;
+
+// Isosurface data structures for holding the vertices, vertex normals, and vertex colors.
+vector<float> vertices;
+vector<float> vertex_normals;
+vector<float> vertex_colors;
+vector<float> isosurface_vertices;
+vector<float> isosurface_vertex_normals;
+vector<float> isosurface_vertex_colors;
+
+// volume information
+Volume vol = Volume();
+
+unsigned int vao[1];
+unsigned int gbo[3];
+unsigned int isosurfaceVertexPositionBuffer;
+unsigned int isosurfaceVertexNormalBuffer;
+unsigned int isosurfaceVertexColorBuffer;
 
 void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	cnpy::NpyArray arr = cnpy::npy_load(file_raw);
@@ -83,7 +105,48 @@ void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	int* loaded_cluster = arr_cluster.data<int>();
 	for (int i = 0; i < nPoint; i++)
 		cluster[i] = loaded_cluster[i];
+}
 
+void computeNormals() {
+	for (int k = 0; k < d; k++) {
+		for (int j = 0; j < h; j++) {
+			for (int i = 0; i < w; i++) {
+				if (k == 0) {
+					vol.grids[k][j][i].normal_z = (vol.grids[k + 1][j][i].value - vol.grids[k][j][i].value);
+				}
+				else if (k == d - 1) {
+					vol.grids[k][j][i].normal_z = (vol.grids[k][j][i].value - vol.grids[k - 1][j][i].value);
+				}
+				else {
+					vol.grids[k][j][i].normal_z = 0.5 * (vol.grids[k + 1][j][i].value - vol.grids[k - 1][j][i].value);
+				}
+
+				if (j == 0) {
+					vol.grids[k][j][i].normal_y = (vol.grids[k][j + 1][i].value - vol.grids[k][j][i].value);
+				}
+				else if (j == h - 1) {
+					vol.grids[k][j][i].normal_y = (vol.grids[k][j][i].value - vol.grids[k][j - 1][i].value);
+				}
+				else {
+					vol.grids[k][j][i].normal_y = 0.5 * (vol.grids[k][j + 1][i].value - vol.grids[k][j - 1][i].value);
+				}
+
+				if (i == 0) {
+					vol.grids[k][j][i].normal_x = (vol.grids[k][j][i + 1].value - vol.grids[k][j][i].value);
+				}
+				else if (i == w - 1) {
+					vol.grids[k][j][i].normal_x = (vol.grids[k][j][i].value - vol.grids[k][j][i - 1].value);
+				}
+				else {
+					vol.grids[k][j][i].normal_x = 0.5 * (vol.grids[k][j][i + 1].value - vol.grids[k][j][i - 1].value);
+				}
+			}
+		}
+	}
+}
+
+
+void computeVol() {
 	for (int i = 0; i < nPoint; i++) {
 		if (cluster[i] == target_cluster) {
 			if (position[i * 3] < xmin)
@@ -112,18 +175,18 @@ void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 		float xPos = position[i * 3];
 		float yPos = position[i * 3 + 1];
 		float zPos = position[i * 3 + 2];
-		if ((xPos > xmin) && (xPos < xmax) && (yPos > ymin) && (yPos < ymax) && (zPos > zmin) && (zPos < zmax)){
+		if ((xPos > xmin) && (xPos < xmax) && (yPos > ymin) && (yPos < ymax) && (zPos > zmin) && (zPos < zmax)) {
 			kd_tree_3d.add(point_type::Point3f(xPos, yPos, zPos));
 		}
 	}
 	kd_tree_3d.build();
-}
 
-void initVol() {
 	float t = pow((float)(scale * scale * scale) / (xmax - xmin) / (ymax - ymin) / (zmax - zmin), 1.0f / 3.0f);
 	w = (int)(t * (xmax - xmin) + 0.5);
 	h = (int)(t * (ymax - ymin) + 0.5);
 	d = (int)(t * (zmax - zmin) + 0.5);
+
+	vol = Volume(w, h, d);
 
 	for (int k = 0; k < d; k++) {
 		for (int j = 0; j < h; j++) {
@@ -135,7 +198,26 @@ void initVol() {
 				vector<int> indices;
 				vector<float> squared_distances;
 
-				//int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
+				int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
+				float value;
+				if (num_3d == 0)
+					value = -1.0f;
+				else {
+					// Inverse Distance Weighting (IDW) interpolation
+					value = 0;
+					float total_invere_dis = 0;
+					for (int t = 0; t < num_3d; t++) {
+						if (cluster[indexToPointID[indices[i]]] == target_cluster)
+							value += 1.0f / sqrt(squared_distances[t]);
+						else 
+							value -= 1.0f / sqrt(squared_distances[t]);
+						total_invere_dis += 1.0f / sqrt(squared_distances[t]);
+					}
+					value /= total_invere_dis;
+				}
+				
+				vol.grids[k][j][i] = GridPoint(x, y, z, value);
+				
 				//std::cout << "Find: " << num_3d << " points," << std::endl;
 				//for (int t = 0; t < num_3d; t++) {
 				//	std::cout << "Point " << t << ": " << kd_tree_3d[indices[t]];
@@ -144,16 +226,18 @@ void initVol() {
 			}
 		}
 	}
+
+	computeNormals();
 }
 
-void initBuffers() {
-	glGenVertexArrays(1, vao);
-	glGenBuffers(2, gbo);
+void initPointBuffers() {
+	glGenVertexArrays(1, pointVAO);
+	glGenBuffers(2, pointVBO);
 	// bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
-	glBindVertexArray(vao[0]);
+	glBindVertexArray(pointVAO[0]);
 
-	unsigned int positionDat = gbo[0];
-	unsigned int clusterDat = gbo[1];
+	unsigned int positionDat = pointVBO[0];
+	unsigned int clusterDat = pointVBO[1];
 
 	glBindBuffer(GL_ARRAY_BUFFER, positionDat);
 	glBufferData(GL_ARRAY_BUFFER, nPoint * sizeof(float) * 3, &position[0], GL_STATIC_DRAW);
@@ -170,10 +254,303 @@ void initBuffers() {
 	glBindVertexArray(0);
 }
 
+// Generates one triangle complete with vertex normals and vertex colors.
+void triangle(GridPoint p1, GridPoint p2, GridPoint p3, bool invert_normals) {
+	// Push the vertices to this triangle face.
+	// Pushing point 3, then 2, and then 1 so that the front face of the triangle
+	// points outward from the surface.
+
+	// Push point 1, then 2, and then 3 so that the front front face of the triangle
+	// points inward from the surface.
+	vertices.push_back(p3.x); vertices.push_back(p3.y); vertices.push_back(p3.z);
+	vertices.push_back(p2.x); vertices.push_back(p2.y); vertices.push_back(p2.z);
+	vertices.push_back(p1.x); vertices.push_back(p1.y); vertices.push_back(p1.z);
+
+	// Calculate the isosurface gradient at point 1, 2, and 3 of the triangle.
+	// These three gradient vectors are the vertex normals of this triangle.
+	// This will provide a nice smooth appearance when the lighting is calculated.
+	// These three gradient vectors will also be the vertex colors.	
+
+	int invert_normal = 1;
+	if (invert_normals)
+		invert_normal = -1;
+
+	// Point 3
+	float vertex_normal_x = p3.normal_x;
+	float vertex_normal_y = p3.normal_y;
+	float vertex_normal_z = p3.normal_z;
+
+	float vertex_normal_length = sqrt((vertex_normal_x * vertex_normal_x) + (vertex_normal_y * vertex_normal_y) + (vertex_normal_z * vertex_normal_z));
+
+	if (vertex_normal_length != 0) {
+		vertex_normal_x = vertex_normal_x / vertex_normal_length;
+		vertex_normal_y = vertex_normal_y / vertex_normal_length;
+		vertex_normal_z = vertex_normal_z / vertex_normal_length;
+	}
+
+	vertex_normals.push_back(invert_normal * vertex_normal_x);
+	vertex_normals.push_back(invert_normal * vertex_normal_y);
+	vertex_normals.push_back(invert_normal * vertex_normal_z);
+
+	// Push the vertex colors for this triangle face point.
+	vertex_colors.push_back(1.0);
+	vertex_colors.push_back(1.0);
+	vertex_colors.push_back(0.0);
+
+	// Point 2
+	vertex_normal_x = p2.normal_x;
+	vertex_normal_y = p2.normal_y;
+	vertex_normal_z = p2.normal_z;
+
+	vertex_normal_length = sqrt((vertex_normal_x * vertex_normal_x) + (vertex_normal_y * vertex_normal_y) + (vertex_normal_z * vertex_normal_z));
+
+	if (vertex_normal_length != 0) {
+		vertex_normal_x = vertex_normal_x / vertex_normal_length;
+		vertex_normal_y = vertex_normal_y / vertex_normal_length;
+		vertex_normal_z = vertex_normal_z / vertex_normal_length;
+	}
+
+	vertex_normals.push_back(invert_normal * vertex_normal_x);
+	vertex_normals.push_back(invert_normal * vertex_normal_y);
+	vertex_normals.push_back(invert_normal * vertex_normal_z);
+
+	// Push the vertex colors for this triangle face point.
+	vertex_colors.push_back(1.0);
+	vertex_colors.push_back(1.0);
+	vertex_colors.push_back(0.0);
+
+	// Point 1
+	vertex_normal_x = p1.normal_x;
+	vertex_normal_y = p1.normal_y;
+	vertex_normal_z = p1.normal_z;
+
+	vertex_normal_length = sqrt((vertex_normal_x * vertex_normal_x) + (vertex_normal_y * vertex_normal_y) + (vertex_normal_z * vertex_normal_z));
+
+	if (vertex_normal_length != 0) {
+		vertex_normal_x = vertex_normal_x / vertex_normal_length;
+		vertex_normal_y = vertex_normal_y / vertex_normal_length;
+		vertex_normal_z = vertex_normal_z / vertex_normal_length;
+	}
+
+	vertex_normals.push_back(invert_normal * vertex_normal_x);
+	vertex_normals.push_back(invert_normal * vertex_normal_y);
+	vertex_normals.push_back(invert_normal * vertex_normal_z);
+
+	// Push the vertex colors for this triangle face point.
+	vertex_colors.push_back(1.0);
+	vertex_colors.push_back(1.0);
+	vertex_colors.push_back(0.0);
+}
+
+GridPoint edge_intersection_interpolation(GridPoint cube_va, GridPoint cube_vb, float iso_value) {
+	if (abs(iso_value - cube_va.value) < eps)
+		return cube_va;
+	if (abs(iso_value - cube_vb.value) < eps)
+		return cube_vb;
+	if (abs(cube_vb.value - cube_va.value) < eps)
+		return cube_va;
+
+	float mean = (iso_value - cube_va.value) / (cube_vb.value - cube_va.value);
+	float x = cube_va.x + mean * (cube_vb.x - cube_va.x);
+	float y = cube_va.y + mean * (cube_vb.y - cube_va.y);
+	float z = cube_va.z + mean * (cube_vb.z - cube_va.z);
+
+	float normal_x = cube_va.normal_x + mean * (cube_vb.normal_x - cube_va.normal_x);
+	float normal_y = cube_va.normal_y + mean * (cube_vb.normal_y - cube_va.normal_y);
+	float normal_z = cube_va.normal_z + mean * (cube_vb.normal_z - cube_vb.normal_z);
+
+	return GridPoint(x, y, z, iso_value, normal_x, normal_y, normal_z);
+}
+
+// The marching cubes algorithm.
+void marching_cubes(int w, int h, int d, float iso_level, bool invert_normals) {
+	for (int k = 0; k < d - 1; k++) {
+		for (int j = 0; j < h - 1; j++) {
+			for (int i = 0; i < w - 1; i++) {
+				// Perform the algorithm on one cube in the grid.
+
+				// The cube's vertices.
+				// There are eight of them.
+
+				//    4---------5
+				//   /|        /|
+				//  / |       / |
+				// 7---------6  |
+				// |  |      |  |
+				// |  0------|--1
+				// | /       | /
+				// |/        |/
+				// 3---------2
+				GridPoint cube_v3 = vol.grids[k][j][i]; // Lower left  front corner.
+				GridPoint cube_v2 = vol.grids[k][j][i + 1]; // Lower right front corner.
+				GridPoint cube_v6 = vol.grids[k][j + 1][i + 1]; // Upper right front corner.
+				GridPoint cube_v7 = vol.grids[k][j + 1][i]; // Upper left  front corner.
+
+				GridPoint cube_v0 = vol.grids[k + 1][j][i]; // Lower left  back corner.
+				GridPoint cube_v1 = vol.grids[k + 1][j][i + 1]; // Lower right back corner.
+				GridPoint cube_v5 = vol.grids[k + 1][j + 1][i + 1]; // Upper right back corner.
+				GridPoint cube_v4 = vol.grids[k + 1][j + 1][i]; // Upper left  back corner.
+
+				int cube_index = 0;
+
+				if (cube_v0.value < iso_level) cube_index |= 1;
+				if (cube_v1.value < iso_level) cube_index |= 2;
+				if (cube_v2.value < iso_level) cube_index |= 4;
+				if (cube_v3.value < iso_level) cube_index |= 8;
+				if (cube_v4.value < iso_level) cube_index |= 16;
+				if (cube_v5.value < iso_level) cube_index |= 32;
+				if (cube_v6.value < iso_level) cube_index |= 64;
+				if (cube_v7.value < iso_level) cube_index |= 128;
+
+				// Does the isosurface not intersect any edges of the cube?
+
+				if (marching_cubes_edge_table[cube_index] == 0)
+					continue;
+
+				// What edges of the cube does the isosurface intersect?
+				// For each cube edge intersected, interpolate an intersection vertex between the edge's incident vertices.
+				// These vertices of intersection will form the triangle(s) that approximate the isosurface.
+
+				// There are 12 edges in a cube.
+
+				//       4----5----5
+				//    8 /|       6/|
+				//     / |9      / | 10
+				//    7----7----6  |
+				//    |  |      |  |
+				// 12 |  0---1--|--1
+				//    | /       | / 
+				//    |/ 4   11 |/ 2
+				//    3----3----2
+				//
+				// 1={0,1},  2={1,2},  3={2,3},  4={3,0},
+				// 5={4,5},  6={5,6},  7={6,7},  8={7,4},
+				// 9={0,4}, 10={5,1}, 11={2,6}, 12={3,7}
+
+				// Base ten slot: 2048 | 1024 | 512 | 256 | 128 | 64 | 32 | 16 | 8 | 4 | 2 | 1
+				// Base two slot:    0 |    0 |   0 |   0 |   0 |  0 |  0 |  0 | 0 | 0 | 0 | 0
+				// Edge slot:       12 |   11 |  10 |   9 |   8 |  7 |  6 |  5 | 4 | 3 | 2 | 1  
+
+				vector<GridPoint> vertices_of_intersection(12, GridPoint(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
+
+				if (marching_cubes_edge_table[cube_index] & 1) // Intersects edge one.
+				{
+					vertices_of_intersection[0] = edge_intersection_interpolation(cube_v0, cube_v1, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 2) // Intersects edge two.
+				{
+					vertices_of_intersection[1] = edge_intersection_interpolation(cube_v1, cube_v2, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 4) // Intersects edge three.
+				{
+					vertices_of_intersection[2] = edge_intersection_interpolation(cube_v2, cube_v3, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 8) // Intersects edge four.
+				{
+					vertices_of_intersection[3] = edge_intersection_interpolation(cube_v3, cube_v0, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 16) // Intersects edge five.
+				{
+					vertices_of_intersection[4] = edge_intersection_interpolation(cube_v4, cube_v5, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 32) // Intersects edge six.
+				{
+					vertices_of_intersection[5] = edge_intersection_interpolation(cube_v5, cube_v6, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 64) // Intersects edge seven.
+				{
+					vertices_of_intersection[6] = edge_intersection_interpolation(cube_v6, cube_v7, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 128) // Intersects edge eight.
+				{
+					vertices_of_intersection[7] = edge_intersection_interpolation(cube_v7, cube_v4, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 256) // Intersects edge nine.
+				{
+					vertices_of_intersection[8] = edge_intersection_interpolation(cube_v0, cube_v4, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 512) // Intersects edge ten.
+				{
+					vertices_of_intersection[9] = edge_intersection_interpolation(cube_v1, cube_v5, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 1024) // Intersects edge eleven.
+				{
+					vertices_of_intersection[10] = edge_intersection_interpolation(cube_v2, cube_v6, iso_level);
+				}
+
+				if (marching_cubes_edge_table[cube_index] & 2048) // Intersects edge twelve.
+				{
+					vertices_of_intersection[11] = edge_intersection_interpolation(cube_v3, cube_v7, iso_level);
+				}
+
+				// Create the triangles.
+				// Three vertices make up a triangle per iteration.
+				for (int a = 0; marching_cubes_triangle_table[cube_index][a] != -1; a += 3) {
+					GridPoint v1 = vertices_of_intersection[marching_cubes_triangle_table[cube_index][a]];
+					GridPoint v2 = vertices_of_intersection[marching_cubes_triangle_table[cube_index][a + 1]];
+					GridPoint v3 = vertices_of_intersection[marching_cubes_triangle_table[cube_index][a + 2]];
+
+					triangle(v1, v2, v3, invert_normals);
+				}
+			}
+		}
+	}
+}
+
+void initBuffers() {
+	// bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
+	glGenVertexArrays(1, vao);
+	glGenBuffers(3, gbo);
+
+	glBindVertexArray(vao[0]);
+
+	// Begin creating the isosurfaces.
+	isosurfaceVertexPositionBuffer = gbo[0];
+	isosurfaceVertexNormalBuffer = gbo[1];
+	isosurfaceVertexColorBuffer = gbo[2];
+
+	// Grid min, grid max, resolution, iso-level, and invert normals.
+	// Do not set the resolution to small.
+	marching_cubes(vol.xSize, vol.ySize, vol.zSize, 0.0, false);
+	isosurface_vertices.swap(vertices);
+	isosurface_vertex_normals.swap(vertex_normals);
+	isosurface_vertex_colors.swap(vertex_colors);
+
+	// Bind and fill the isosurface vertex positions
+	glBindBuffer(GL_ARRAY_BUFFER, isosurfaceVertexPositionBuffer);
+	glBufferData(GL_ARRAY_BUFFER, isosurface_vertices.size() * sizeof(float), &isosurface_vertices[0], GL_STATIC_DRAW);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+	glEnableVertexAttribArray(0);
+
+	// Bind and fill the isosurface vertex normals.
+	glBindBuffer(GL_ARRAY_BUFFER, isosurfaceVertexNormalBuffer);
+	glBufferData(GL_ARRAY_BUFFER, isosurface_vertex_normals.size() * sizeof(float), &isosurface_vertex_normals[0], GL_STATIC_DRAW);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+	glEnableVertexAttribArray(1);
+
+	// Bind and fill the isosurface vertex colors.
+	glBindBuffer(GL_ARRAY_BUFFER, isosurfaceVertexColorBuffer);
+	glBufferData(GL_ARRAY_BUFFER, isosurface_vertex_colors.size() * sizeof(float), &isosurface_vertex_colors[0], GL_STATIC_DRAW);
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+	glEnableVertexAttribArray(2);
+
+	glBindVertexArray(0);
+}
+
 int main()
 {
 	loadPointsFromNpy("run41_025.npy", "run41_025_cluster.npy");
-	initVol();
+	computeVol();
 
 	// glfw: initialize and configure
 	// ------------------------------
@@ -212,7 +589,7 @@ int main()
 
 	// build and compile our shader program
 	// ------------------------------------
-	Shader ourShader("shader.vs", "shader.fs"); // you can name your shader files however you like
+	Shader pointShader("point.vs", "point.fs"); 
 
 	initBuffers();
 
@@ -268,9 +645,11 @@ int main()
 		ourShader.setMat4("uMVMatrix", mvMatrix);
 		ourShader.setMat4("uPMatrix", pMatrix);
 
-		glBindVertexArray(vao[0]);
+		glBindVertexArray(pointVAO[0]);
 		glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
 		glDrawArrays(GL_POINTS, 0, nPoint);
+
+
 
 		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
 		// -------------------------------------------------------------------------------
@@ -280,8 +659,8 @@ int main()
 
 	// optional: de-allocate all resources once they've outlived their purpose:
 	// ------------------------------------------------------------------------
-	glDeleteVertexArrays(1, vao);
-	glDeleteBuffers(1, gbo);
+	glDeleteVertexArrays(1, pointVAO);
+	glDeleteBuffers(1, pointVBO);
 
 	// glfw: terminate, clearing all previously allocated GLFW resources.
 	// ------------------------------------------------------------------

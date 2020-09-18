@@ -567,6 +567,78 @@ void initBuffers() {
 	glBindVertexArray(0);
 }
 
+void drawPoints(Shader ourShader) {
+	ourShader.use();
+
+	// Pass the vertex shader the projection matrix and the model-view matrix.
+	ourShader.setMat4("uMVMatrix", mvMatrix);
+	ourShader.setMat4("uPMatrix", pMatrix);
+
+	glBindVertexArray(pointVAO[0]);
+	glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
+	glDrawArrays(GL_POINTS, 0, nPoint);
+	glBindVertexArray(0);
+}
+
+void drawSurface(Shader ourShader) {
+	ourShader.use();
+	ourShader.setInt("uPerspectiveProjection", 1);
+
+	ourShader.setInt("uShowDepth", show_depth);
+	ourShader.setInt("uShowNormals", show_normals);
+	ourShader.setInt("uShowPosition", show_position);
+
+	// Pass the vertex shader the projection matrix and the model-view matrix.
+	ourShader.setMat4("uMVMatrix", mvMatrix);
+	ourShader.setMat4("uPMatrix", pMatrix);
+	// Pass the vertex normal matrix to the shader so it can compute the lighting calculations.
+	normalMatrix = glm::transpose(glm::inverse(glm::mat3(mvMatrix)));
+	ourShader.setMat3("uNMatrix", normalMatrix);
+
+	// Disable alpha blending.
+	glDisable(GL_BLEND);
+	if (use_lighting == 1) {
+		// Pass the lighting parameters to the fragment shader.
+		// Global ambient color. 
+		ourShader.setVec3("uAmbientColor", base_color);
+
+		// Point light 1.
+		float point_light_dist = 30.0f;
+		glm::vec3 point_light_direction = direction / dist * point_light_dist;
+		glm::vec3 point_light_position = center + point_light_direction;
+		glm::vec4 light_pos(point_light_position.x, point_light_position.y, point_light_position.z, 1.0);
+		light_pos = view * light_pos;
+		ourShader.setVec3("uPointLightingColor", lighting_power, lighting_power, lighting_power);
+		ourShader.setVec3("uPointLightingLocation", light_pos[0], light_pos[1], light_pos[2]);
+
+		// Point light 2.
+		float point_light_dist1 = 30.0f;
+		float point_light_position_x1 = 0 + point_light_dist1 * cos(point_light_phi1) * sin(point_light_theta1);
+		float point_light_position_y1 = 0 + point_light_dist1 * sin(point_light_phi1) * sin(point_light_theta1);
+		float point_light_position_z1 = 0 + point_light_dist1 * cos(point_light_theta1);
+
+		glm::vec4 light_pos1(point_light_position_x1, point_light_position_y1, point_light_position_z1, 1.0);
+		light_pos1 = view * light_pos1;
+
+		ourShader.setVec3("uPointLightingColor1", lighting_power1, lighting_power1, lighting_power1);
+		ourShader.setVec3("uPointLightingLocation1", light_pos1[0], light_pos1[1], light_pos1[2]);
+
+		// Turn off lighting for a moment so that the point light isosurface is 
+		// bright simulating that the light is emanating from the surface.
+		use_lighting = 0;
+
+		ourShader.setInt("uUseLighting", use_lighting);
+
+		use_lighting = 1;
+	}
+
+	ourShader.setInt("uUseLighting", use_lighting);
+
+	glBindVertexArray(vao[0]);
+	glDrawArrays(GL_TRIANGLES, 0, isosurface_vertices.size() / 3);
+	glBindVertexArray(0);
+}
+
 int main()
 {
 	loadPointsFromNpy("run41_025.npy", "run41_025_cluster.npy");
@@ -661,74 +733,10 @@ int main()
 		// ------
 		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		pointShader.use();
-
-		// Pass the vertex shader the projection matrix and the model-view matrix.
-		pointShader.setMat4("uMVMatrix", mvMatrix);
-		pointShader.setMat4("uPMatrix", pMatrix);
-
-		glBindVertexArray(pointVAO[0]);
-		glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
-		glDrawArrays(GL_POINTS, 0, nPoint);
-		glBindVertexArray(0);
-
-		surfaceShader.use();
-		surfaceShader.setInt("uPerspectiveProjection", 1);
-
-		surfaceShader.setInt("uShowDepth", show_depth);
-		surfaceShader.setInt("uShowNormals", show_normals);
-		surfaceShader.setInt("uShowPosition", show_position);
-
-		// Pass the vertex shader the projection matrix and the model-view matrix.
-		surfaceShader.setMat4("uMVMatrix", mvMatrix);
-		surfaceShader.setMat4("uPMatrix", pMatrix);
-		// Pass the vertex normal matrix to the shader so it can compute the lighting calculations.
-		normalMatrix = glm::transpose(glm::inverse(glm::mat3(mvMatrix)));
-		surfaceShader.setMat3("uNMatrix", normalMatrix);
-
-		// Disable alpha blending.
-		glDisable(GL_BLEND);
-		if (use_lighting == 1) {
-			// Pass the lighting parameters to the fragment shader.
-			// Global ambient color. 
-			surfaceShader.setVec3("uAmbientColor", base_color);
-
-			// Point light 1.
-			float point_light_dist = 30.0f;
-			glm::vec3 point_light_direction = direction / dist * point_light_dist;
-			glm::vec3 point_light_position = center + point_light_direction;
-			glm::vec4 light_pos(point_light_position.x, point_light_position.y, point_light_position.z, 1.0);
-			light_pos = view * light_pos;
-			surfaceShader.setVec3("uPointLightingColor", lighting_power, lighting_power, lighting_power);
-			surfaceShader.setVec3("uPointLightingLocation", light_pos[0], light_pos[1], light_pos[2]);
-
-			// Point light 2.
-			float point_light_dist1 = 30.0f;
-			float point_light_position_x1 = 0 + point_light_dist1 * cos(point_light_phi1) * sin(point_light_theta1);
-			float point_light_position_y1 = 0 + point_light_dist1 * sin(point_light_phi1) * sin(point_light_theta1);
-			float point_light_position_z1 = 0 + point_light_dist1 * cos(point_light_theta1);
-
-			glm::vec4 light_pos1(point_light_position_x1, point_light_position_y1, point_light_position_z1, 1.0);
-			light_pos1 = view * light_pos1;
-
-			surfaceShader.setVec3("uPointLightingColor1", lighting_power1, lighting_power1, lighting_power1);
-			surfaceShader.setVec3("uPointLightingLocation1", light_pos1[0], light_pos1[1], light_pos1[2]);
-
-			// Turn off lighting for a moment so that the point light isosurface is 
-			// bright simulating that the light is emanating from the surface.
-			use_lighting = 0;
-
-			surfaceShader.setInt("uUseLighting", use_lighting);
-
-			use_lighting = 1;
-		}
-
-		surfaceShader.setInt("uUseLighting", use_lighting);
-
-		glBindVertexArray(vao[0]);
-		glDrawArrays(GL_TRIANGLES, 0, isosurface_vertices.size() / 3);
-		glBindVertexArray(0);
-			
+		
+		drawPoints(pointShader);
+		drawSurface(surfaceShader);
+		
 		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
 		// -------------------------------------------------------------------------------
 		glfwSwapBuffers(window);

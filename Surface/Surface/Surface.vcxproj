@@ -139,8 +139,10 @@
     <ClInclude Include="Volume.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="shader.fs" />
-    <None Include="shader.vs" />
+    <None Include="point.fs" />
+    <None Include="point.vs" />
+    <None Include="surface.fs" />
+    <None Include="surface.vs" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

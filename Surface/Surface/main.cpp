@@ -26,12 +26,16 @@ using namespace std;
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow *window);
 
+// Base color used for the ambient, fog, and clear-to colors.
+glm::vec3 base_color(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0);
+
 // settings
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 800;
 
 glm::mat4 pMatrix;
 glm::mat4 mvMatrix;
+glm::mat3 normalMatrix;
 
 // Information related to the camera 
 float dist = 30.0f;
@@ -44,6 +48,10 @@ glm::vec3 eye;
 glm::mat4 view;
 glm::mat4 model;
 
+// Lighting power.
+float lighting_power = 0.5f;
+float lighting_power1 = 0;
+
 // Used for time based animation.
 float time_last = 0;
 
@@ -51,17 +59,29 @@ float time_last = 0;
 float rotation_radians = 0.0;
 float rotation_radians_step = 0.2 * 180 / M_PI;
 
+// Use lighting?
+int use_lighting = 1;
+
+// Render different buffers.
+int show_depth = 0;
+int show_normals = 0;
+int show_position = 0;
+
+// Used to orbit the point lights.
+float point_light_theta1 = M_PI / 2;
+float point_light_phi1 = M_PI / 2;
+
 unsigned int pointVAO[1];
 unsigned int pointVBO[2];
 
 const int nPoint = 192741;
-const int target_cluster = 2;
+const int target_cluster = 3;
 vector<float> position;
 vector<float> concentration;
 vector<int> cluster;
 
-const float boarder = 0.1f;
-const int scale = 128;
+const float boarder = 0.5f;
+const int scale = 32;
 float xmin = 10.0f, xmax = -10.0f, ymin = 10.0f, ymax = -10.0f, zmin = 10.0f, zmax = -10.0f;
 int w, h, d;
 
@@ -145,7 +165,6 @@ void computeNormals() {
 	}
 }
 
-
 void computeVol() {
 	for (int i = 0; i < nPoint; i++) {
 		if (cluster[i] == target_cluster) {
@@ -177,6 +196,7 @@ void computeVol() {
 		float zPos = position[i * 3 + 2];
 		if ((xPos > xmin) && (xPos < xmax) && (yPos > ymin) && (yPos < ymax) && (zPos > zmin) && (zPos < zmax)) {
 			kd_tree_3d.add(point_type::Point3f(xPos, yPos, zPos));
+			indexToPointID.push_back(i);
 		}
 	}
 	kd_tree_3d.build();
@@ -191,14 +211,14 @@ void computeVol() {
 	for (int k = 0; k < d; k++) {
 		for (int j = 0; j < h; j++) {
 			for (int i = 0; i < w; i++) {
-				float x = xmin + i * (xmax - xmin) / w;
-				float y = ymin + j * (ymax - ymin) / h;
-				float z = zmin + k * (zmax - zmin) / d;
+				float x = xmin + i * (xmax - xmin) / (w - 1);
+				float y = ymin + j * (ymax - ymin) / (h - 1);
+				float z = zmin + k * (zmax - zmin) / (d - 1);
 				point_type::Point3f point_to_search(x, y, z);
 				vector<int> indices;
 				vector<float> squared_distances;
 
-				int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
+				int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.25f, indices, squared_distances);
 				float value;
 				if (num_3d == 0)
 					value = -1.0f;
@@ -207,11 +227,11 @@ void computeVol() {
 					value = 0;
 					float total_invere_dis = 0;
 					for (int t = 0; t < num_3d; t++) {
-						if (cluster[indexToPointID[indices[i]]] == target_cluster)
-							value += 1.0f / sqrt(squared_distances[t]);
+						if (cluster[indexToPointID[indices[t]]] == target_cluster)
+							value += 1.0f / squared_distances[t];
 						else 
-							value -= 1.0f / sqrt(squared_distances[t]);
-						total_invere_dis += 1.0f / sqrt(squared_distances[t]);
+							value -= 1.0f / squared_distances[t];
+						total_invere_dis += 1.0f / squared_distances[t];
 					}
 					value /= total_invere_dis;
 				}
@@ -521,7 +541,7 @@ void initBuffers() {
 
 	// Grid min, grid max, resolution, iso-level, and invert normals.
 	// Do not set the resolution to small.
-	marching_cubes(vol.xSize, vol.ySize, vol.zSize, 0.0, false);
+	marching_cubes(vol.xSize, vol.ySize, vol.zSize, 0.0, true);
 	isosurface_vertices.swap(vertices);
 	isosurface_vertex_normals.swap(vertex_normals);
 	isosurface_vertex_colors.swap(vertex_colors);
@@ -590,7 +610,9 @@ int main()
 	// build and compile our shader program
 	// ------------------------------------
 	Shader pointShader("point.vs", "point.fs"); 
+	Shader surfaceShader("surface.vs", "surface.fs");
 
+	initPointBuffers();
 	initBuffers();
 
 	// render loop
@@ -639,18 +661,74 @@ int main()
 		// ------
 		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		ourShader.use();
+		pointShader.use();
 
 		// Pass the vertex shader the projection matrix and the model-view matrix.
-		ourShader.setMat4("uMVMatrix", mvMatrix);
-		ourShader.setMat4("uPMatrix", pMatrix);
+		pointShader.setMat4("uMVMatrix", mvMatrix);
+		pointShader.setMat4("uPMatrix", pMatrix);
 
 		glBindVertexArray(pointVAO[0]);
 		glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
 		glDrawArrays(GL_POINTS, 0, nPoint);
+		glBindVertexArray(0);
 
+		surfaceShader.use();
+		surfaceShader.setInt("uPerspectiveProjection", 1);
 
+		surfaceShader.setInt("uShowDepth", show_depth);
+		surfaceShader.setInt("uShowNormals", show_normals);
+		surfaceShader.setInt("uShowPosition", show_position);
 
+		// Pass the vertex shader the projection matrix and the model-view matrix.
+		surfaceShader.setMat4("uMVMatrix", mvMatrix);
+		surfaceShader.setMat4("uPMatrix", pMatrix);
+		// Pass the vertex normal matrix to the shader so it can compute the lighting calculations.
+		normalMatrix = glm::transpose(glm::inverse(glm::mat3(mvMatrix)));
+		surfaceShader.setMat3("uNMatrix", normalMatrix);
+
+		// Disable alpha blending.
+		glDisable(GL_BLEND);
+		if (use_lighting == 1) {
+			// Pass the lighting parameters to the fragment shader.
+			// Global ambient color. 
+			surfaceShader.setVec3("uAmbientColor", base_color);
+
+			// Point light 1.
+			float point_light_dist = 30.0f;
+			glm::vec3 point_light_direction = direction / dist * point_light_dist;
+			glm::vec3 point_light_position = center + point_light_direction;
+			glm::vec4 light_pos(point_light_position.x, point_light_position.y, point_light_position.z, 1.0);
+			light_pos = view * light_pos;
+			surfaceShader.setVec3("uPointLightingColor", lighting_power, lighting_power, lighting_power);
+			surfaceShader.setVec3("uPointLightingLocation", light_pos[0], light_pos[1], light_pos[2]);
+
+			// Point light 2.
+			float point_light_dist1 = 30.0f;
+			float point_light_position_x1 = 0 + point_light_dist1 * cos(point_light_phi1) * sin(point_light_theta1);
+			float point_light_position_y1 = 0 + point_light_dist1 * sin(point_light_phi1) * sin(point_light_theta1);
+			float point_light_position_z1 = 0 + point_light_dist1 * cos(point_light_theta1);
+
+			glm::vec4 light_pos1(point_light_position_x1, point_light_position_y1, point_light_position_z1, 1.0);
+			light_pos1 = view * light_pos1;
+
+			surfaceShader.setVec3("uPointLightingColor1", lighting_power1, lighting_power1, lighting_power1);
+			surfaceShader.setVec3("uPointLightingLocation1", light_pos1[0], light_pos1[1], light_pos1[2]);
+
+			// Turn off lighting for a moment so that the point light isosurface is 
+			// bright simulating that the light is emanating from the surface.
+			use_lighting = 0;
+
+			surfaceShader.setInt("uUseLighting", use_lighting);
+
+			use_lighting = 1;
+		}
+
+		surfaceShader.setInt("uUseLighting", use_lighting);
+
+		glBindVertexArray(vao[0]);
+		glDrawArrays(GL_TRIANGLES, 0, isosurface_vertices.size() / 3);
+		glBindVertexArray(0);
+			
 		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
 		// -------------------------------------------------------------------------------
 		glfwSwapBuffers(window);
@@ -659,6 +737,8 @@ int main()
 
 	// optional: de-allocate all resources once they've outlived their purpose:
 	// ------------------------------------------------------------------------
+	glDeleteVertexArrays(1, vao);
+	glDeleteBuffers(1, gbo);
 	glDeleteVertexArrays(1, pointVAO);
 	glDeleteBuffers(1, pointVBO);
 

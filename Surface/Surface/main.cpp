@@ -131,34 +131,35 @@ void computeNormals() {
 	for (int k = 0; k < d; k++) {
 		for (int j = 0; j < h; j++) {
 			for (int i = 0; i < w; i++) {
+				int idx = k * h * w + j * w + i;
 				if (k == 0) {
-					vol.grids[k][j][i].normal_z = (vol.grids[k + 1][j][i].value - vol.grids[k][j][i].value);
+					vol.grids[idx].normal_z = (vol.grids[idx + h * w].value - vol.grids[idx].value);
 				}
 				else if (k == d - 1) {
-					vol.grids[k][j][i].normal_z = (vol.grids[k][j][i].value - vol.grids[k - 1][j][i].value);
+					vol.grids[idx].normal_z = (vol.grids[idx].value - vol.grids[idx - h * w].value);
 				}
 				else {
-					vol.grids[k][j][i].normal_z = 0.5 * (vol.grids[k + 1][j][i].value - vol.grids[k - 1][j][i].value);
+					vol.grids[idx].normal_z = 0.5 * (vol.grids[idx + h * w].value - vol.grids[idx - h * w].value);
 				}
 
 				if (j == 0) {
-					vol.grids[k][j][i].normal_y = (vol.grids[k][j + 1][i].value - vol.grids[k][j][i].value);
+					vol.grids[idx].normal_y = (vol.grids[idx + w].value - vol.grids[idx].value);
 				}
 				else if (j == h - 1) {
-					vol.grids[k][j][i].normal_y = (vol.grids[k][j][i].value - vol.grids[k][j - 1][i].value);
+					vol.grids[idx].normal_y = (vol.grids[idx].value - vol.grids[idx - w].value);
 				}
 				else {
-					vol.grids[k][j][i].normal_y = 0.5 * (vol.grids[k][j + 1][i].value - vol.grids[k][j - 1][i].value);
+					vol.grids[idx].normal_y = 0.5 * (vol.grids[idx + w].value - vol.grids[idx - w].value);
 				}
 
 				if (i == 0) {
-					vol.grids[k][j][i].normal_x = (vol.grids[k][j][i + 1].value - vol.grids[k][j][i].value);
+					vol.grids[idx].normal_x = (vol.grids[idx + 1].value - vol.grids[idx].value);
 				}
 				else if (i == w - 1) {
-					vol.grids[k][j][i].normal_x = (vol.grids[k][j][i].value - vol.grids[k][j][i - 1].value);
+					vol.grids[idx].normal_x = (vol.grids[idx].value - vol.grids[idx - 1].value);
 				}
 				else {
-					vol.grids[k][j][i].normal_x = 0.5 * (vol.grids[k][j][i + 1].value - vol.grids[k][j][i - 1].value);
+					vol.grids[idx].normal_x = 0.5 * (vol.grids[idx + 1].value - vol.grids[idx - 1].value);
 				}
 			}
 		}
@@ -211,6 +212,7 @@ void computeVol() {
 	for (int k = 0; k < d; k++) {
 		for (int j = 0; j < h; j++) {
 			for (int i = 0; i < w; i++) {
+				int idx = k * h * w + j * w + i;
 				float x = xmin + i * (xmax - xmin) / (w - 1);
 				float y = ymin + j * (ymax - ymin) / (h - 1);
 				float z = zmin + k * (zmax - zmin) / (d - 1);
@@ -236,7 +238,7 @@ void computeVol() {
 					value /= total_invere_dis;
 				}
 				
-				vol.grids[k][j][i] = GridPoint(x, y, z, value);
+				vol.grids[idx] = GridPoint(x, y, z, value);
 				
 				//std::cout << "Find: " << num_3d << " points," << std::endl;
 				//for (int t = 0; t < num_3d; t++) {
@@ -248,7 +250,10 @@ void computeVol() {
 	}
 
 	computeNormals();
+
 }
+
+
 
 void initPointBuffers() {
 	glGenVertexArrays(1, pointVAO);
@@ -401,15 +406,16 @@ void marching_cubes(int w, int h, int d, float iso_level, bool invert_normals) {
 				// | /       | /
 				// |/        |/
 				// 3---------2
-				GridPoint cube_v3 = vol.grids[k][j][i]; // Lower left  front corner.
-				GridPoint cube_v2 = vol.grids[k][j][i + 1]; // Lower right front corner.
-				GridPoint cube_v6 = vol.grids[k][j + 1][i + 1]; // Upper right front corner.
-				GridPoint cube_v7 = vol.grids[k][j + 1][i]; // Upper left  front corner.
+				int idx = k * h * w + j * w + i;
+				GridPoint cube_v3 = vol.grids[idx]; // Lower left  front corner. [k][j][i]
+				GridPoint cube_v2 = vol.grids[idx + 1]; // Lower right front corner. [k][j][i + 1]
+				GridPoint cube_v6 = vol.grids[idx + w + 1]; // Upper right front corner. [k][j + 1][i + 1]
+				GridPoint cube_v7 = vol.grids[idx + w]; // Upper left  front corner. [k][j + 1][i]
 
-				GridPoint cube_v0 = vol.grids[k + 1][j][i]; // Lower left  back corner.
-				GridPoint cube_v1 = vol.grids[k + 1][j][i + 1]; // Lower right back corner.
-				GridPoint cube_v5 = vol.grids[k + 1][j + 1][i + 1]; // Upper right back corner.
-				GridPoint cube_v4 = vol.grids[k + 1][j + 1][i]; // Upper left  back corner.
+				GridPoint cube_v0 = vol.grids[idx + h * w]; // Lower left  back corner. [k + 1][j][i]
+				GridPoint cube_v1 = vol.grids[idx + h * w + 1]; // Lower right back corner. [k + 1][j][i + 1]
+				GridPoint cube_v5 = vol.grids[idx + h * w + w + 1]; // Upper right back corner. [k + 1][j + 1][i + 1]
+				GridPoint cube_v4 = vol.grids[idx + h * w + w]; // Upper left  back corner. [k + 1][j + 1][i]
 
 				int cube_index = 0;
 

@@ -10,6 +10,7 @@
 #include"cnpy.h"
 #include<cstdlib>
 #include<iostream>
+#include <fstream>
 #include <math.h>
 #include<string>
 
@@ -38,7 +39,7 @@ glm::mat4 mvMatrix;
 glm::mat3 normalMatrix;
 
 // Information related to the camera 
-float dist = 30.0f;
+float dist = 6.0f;
 float theta, phi;
 glm::vec3 direction;
 glm::vec3 up;
@@ -74,14 +75,14 @@ float point_light_phi1 = M_PI / 2;
 unsigned int pointVAO[1];
 unsigned int pointVBO[2];
 
-const int nPoint = 192741;
+int nPoint, nDim;
 const int target_cluster = 3;
 vector<float> position;
-vector<float> concentration;
 vector<int> cluster;
 
-const float boarder = 0.5f;
-const int scale = 32;
+const float boarder = 0.06f;
+const int scale = 64;
+const float range = 1.0f;
 float xmin = 10.0f, xmax = -10.0f, ymin = 10.0f, ymax = -10.0f, zmin = 10.0f, zmax = -10.0f;
 int w, h, d;
 
@@ -109,17 +110,28 @@ unsigned int isosurfaceVertexColorBuffer;
 
 void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	cnpy::NpyArray arr = cnpy::npy_load(file_raw);
+	nPoint = arr.shape[0];
+	nDim = arr.shape[1];
 	float* loaded = arr.data<float>();
 
 	position.resize(nPoint * 3);
-	concentration.resize(nPoint);
-	for (int i = 0; i < nPoint; i++) {
-		position[i * 3] = loaded[i * 7];
-		position[i * 3 + 1] = loaded[i * 7 + 1];
-		position[i * 3 + 2] = (loaded[i * 7 + 2] - 5.0f);
-		concentration[i] = loaded[i * 7 + 3];
+	if (nDim == 7)	// Salt Dissolution
+	{
+		for (int i = 0; i < nPoint; i++) {
+			position[i * 3] = loaded[i * nDim] / 5.0f;	// x: [-5, 5] -> [-1, 1]
+			position[i * 3 + 1] = loaded[i * nDim + 1] / 5.0f;	// y: [-5, 5] -> [-1, 1]
+			position[i * 3 + 2] = (loaded[i * nDim + 2] - 5.0f) / 5.0f;	// z: [0, 10] -> [-1, 1]
+		}
 	}
-
+	else if (nDim == 10)	// Dark Sky Simulation
+	{
+		for (int i = 0; i < nPoint; i++) {
+			position[i * 3] = (loaded[i * nDim] - 31.25f) / 31.25f;	// x: [0, 62.5] -> [-1, 1]
+			position[i * 3 + 1] = (loaded[i * nDim + 1] - 31.25f) / 31.25f;	// y: [0, 62.5] -> [-1, 1]
+			position[i * 3 + 2] = (loaded[i * nDim + 2] - 31.25f) / 31.25f;	// z: [0, 62.5] -> [-5, 5]
+		}
+	}
+	
 	cnpy::NpyArray arr_cluster = cnpy::npy_load(file_cluster);
 	cluster.resize(nPoint);
 	int* loaded_cluster = arr_cluster.data<int>();
@@ -166,7 +178,7 @@ void computeNormals() {
 	}
 }
 
-void computeVol() {
+void computeVolSize() {
 	for (int i = 0; i < nPoint; i++) {
 		if (cluster[i] == target_cluster) {
 			if (position[i * 3] < xmin)
@@ -190,6 +202,17 @@ void computeVol() {
 	zmin -= boarder;
 	zmax += boarder;
 
+	float t = pow((float)(scale * scale * scale) / (xmax - xmin) / (ymax - ymin) / (zmax - zmin), 1.0f / 3.0f);
+	w = (int)(t * (xmax - xmin) + 0.5);
+	h = (int)(t * (ymax - ymin) + 0.5);
+	d = (int)(t * (zmax - zmin) + 0.5);
+
+	vol = Volume(w, h, d);
+}
+
+void computeVol() {
+	computeVolSize();
+
 	// build KD-tree
 	for (int i = 0; i < nPoint; i++) {
 		float xPos = position[i * 3];
@@ -200,14 +223,23 @@ void computeVol() {
 			indexToPointID.push_back(i);
 		}
 	}
+	int outsideIdx = 0;
+	for (int k = 0; k < d - 1; k++) {
+		for (int j = 0; j < h - 1; j++) {
+			for (int i = 0; i < w - 1; i++) {
+				float x = xmin + (float)(i + 0.5) * (xmax - xmin) / (w - 1);
+				float y = ymin + (float)(j + 0.5) * (ymax - ymin) / (h - 1);
+				float z = zmin + (float)(k + 0.5) * (zmax - zmin) / (d - 1);
+				if ((x * x + y * y - range * range) > 0) {
+					cluster.push_back(0);
+					kd_tree_3d.add(point_type::Point3f(x, y, z));
+					indexToPointID.push_back(nPoint + outsideIdx);
+					outsideIdx++;
+				}
+			}
+		}
+	}
 	kd_tree_3d.build();
-
-	float t = pow((float)(scale * scale * scale) / (xmax - xmin) / (ymax - ymin) / (zmax - zmin), 1.0f / 3.0f);
-	w = (int)(t * (xmax - xmin) + 0.5);
-	h = (int)(t * (ymax - ymin) + 0.5);
-	d = (int)(t * (zmax - zmin) + 0.5);
-
-	vol = Volume(w, h, d);
 
 	for (int k = 0; k < d; k++) {
 		for (int j = 0; j < h; j++) {
@@ -220,9 +252,9 @@ void computeVol() {
 				vector<int> indices;
 				vector<float> squared_distances;
 
-				int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.25f, indices, squared_distances);
+				int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
 				float value;
-				if (num_3d == 0)
+				if (num_3d == 0)	// outside the circle 
 					value = -1.0f;
 				else {
 					// Inverse Distance Weighting (IDW) interpolation
@@ -230,13 +262,15 @@ void computeVol() {
 					float total_invere_dis = 0;
 					for (int t = 0; t < num_3d; t++) {
 						if (cluster[indexToPointID[indices[t]]] == target_cluster)
-							value += 1.0f / squared_distances[t];
+							value += 1.0f / pow(squared_distances[t], 0.5);
 						else 
-							value -= 1.0f / squared_distances[t];
-						total_invere_dis += 1.0f / squared_distances[t];
+							value -= 1.0f / pow(squared_distances[t], 0.5);
+						total_invere_dis += 1.0f / pow(squared_distances[t], 0.5);
 					}
 					value /= total_invere_dis;
 				}
+
+				//float value = -(x * x + y * y) + range * range;
 				
 				vol.grids[idx] = GridPoint(x, y, z, value);
 				
@@ -251,9 +285,21 @@ void computeVol() {
 
 	computeNormals();
 
+	ofstream out("temp.raw", ios::out | ios::binary);
+	typename vector<GridPoint>::size_type size = vol.grids.size();
+	out.write((char*)&size, sizeof(size));
+	out.write((char*)&vol.grids[0], vol.grids.size() * sizeof(GridPoint));
+	out.close();
 }
 
+void initVol() {
+	computeVolSize();
 
+	ifstream in("temp.raw", ios::in | ios::binary);
+	typename vector<GridPoint>::size_type size = 0;
+	in.read((char*)&size, sizeof(size));
+	in.read((char*)&vol.grids[0], vol.grids.size() * sizeof(GridPoint));
+}
 
 void initPointBuffers() {
 	glGenVertexArrays(1, pointVAO);
@@ -603,11 +649,10 @@ void drawSurface(Shader ourShader) {
 
 	// Disable alpha blending.
 	glDisable(GL_BLEND);
+	// Pass the lighting parameters to the fragment shader.
+	// Global ambient color.
+	ourShader.setVec3("uAmbientColor", base_color);
 	if (use_lighting == 1) {
-		// Pass the lighting parameters to the fragment shader.
-		// Global ambient color. 
-		ourShader.setVec3("uAmbientColor", base_color);
-
 		// Point light 1.
 		float point_light_dist = 30.0f;
 		glm::vec3 point_light_direction = direction / dist * point_light_dist;
@@ -648,7 +693,9 @@ void drawSurface(Shader ourShader) {
 int main()
 {
 	loadPointsFromNpy("run41_025.npy", "run41_025_cluster.npy");
-	computeVol();
+	//loadPointsFromNpy("cos_49.npy", "cos_49_cluster.npy");
+	//computeVol();
+	//initVol();
 
 	// glfw: initialize and configure
 	// ------------------------------
@@ -691,7 +738,7 @@ int main()
 	Shader surfaceShader("surface.vs", "surface.fs");
 
 	initPointBuffers();
-	initBuffers();
+	//initBuffers();
 
 	// render loop
 	// -----------
@@ -708,8 +755,8 @@ int main()
 		time_last = time_now;
 		
 		// create the projection matrix 
-		float near = 1.0f;
-		float far = 50.0f;
+		float near = 0.2f;
+		float far = 10.0f;
 		float fov_r = 30.0f;
 
 		pMatrix = glm::perspective(fov_r, (float)SCR_WIDTH / (float)SCR_HEIGHT, near, far);
@@ -741,7 +788,7 @@ int main()
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		
 		drawPoints(pointShader);
-		drawSurface(surfaceShader);
+		//drawSurface(surfaceShader);
 		
 		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
 		// -------------------------------------------------------------------------------

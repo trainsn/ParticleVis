@@ -14,14 +14,14 @@ void main()
 	gl_PointSize = 1.5f;
 	if (cluster_id == 0)
 		//ourColor = vec3(0.2f, 0.2f, 0.2f);
-		ourColor = vec3(0.2f, 0.2f, 0.2f);
+		ourColor = vec3(1.0f, 0.0f, 0.0f);
 	if (cluster_id == 1)
-		//ourColor = vec3(0.2f, 0.2f, 0.2f);
-		ourColor = vec3(1.0f, 0.0f, 0.0f);	
+		ourColor = vec3(0.2f, 0.2f, 0.2f);
+			
 	if (cluster_id == 2)
-		//ourColor = vec3(0.2f, 0.2f, 0.2f);
-		ourColor = vec3(0.0f, 1.0f, 0.0f);
+		ourColor = vec3(0.2f, 0.2f, 0.2f);
+		//ourColor = vec3(0.0f, 1.0f, 0.0f);
 	if (cluster_id == 3)	
-		//ourColor = vec3(1.0f, 0.0f, 0.0f);
-		ourColor = vec3(0.0f, 0.0f, 1.0f);
+		ourColor = vec3(0.2f, 0.2f, 0.2f);
+		//ourColor = vec3(0.0f, 0.0f, 1.0f);
 }

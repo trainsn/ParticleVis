@@ -12,7 +12,8 @@
 #include<iostream>
 #include <fstream>
 #include <math.h>
-#include<string>
+#include <string>
+#include <stdlib.h> 
 
 #include "shader.h"
 #include "Volume.h"
@@ -58,7 +59,7 @@ float time_last = 0;
 
 // Used to rotate the isosurface.
 float rotation_radians = 0.0;
-float rotation_radians_step = 0.2 * 180 / M_PI;
+float rotation_radians_step = 0.0 * 180 / M_PI;
 
 // Use lighting?
 int use_lighting = 1;
@@ -76,12 +77,12 @@ unsigned int pointVAO[1];
 unsigned int pointVBO[2];
 
 int nPoint, nDim;
-const int target_cluster = 3;
+const int target_cluster = 0;
 vector<float> position;
 vector<int> cluster;
 
-const float boarder = 0.06f;
-const int scale = 64;
+float boarder;
+int scale;
 const float range = 1.0f;
 float xmin = 10.0f, xmax = -10.0f, ymin = 10.0f, ymax = -10.0f, zmin = 10.0f, zmax = -10.0f;
 int w, h, d;
@@ -112,31 +113,42 @@ void loadPointsFromNpy(const string& file_raw, const string& file_cluster) {
 	cnpy::NpyArray arr = cnpy::npy_load(file_raw);
 	nPoint = arr.shape[0];
 	nDim = arr.shape[1];
+	if (nDim == 7) {
+		boarder = 0.06f;
+		scale = 64;
+	}
+	else if (nDim == 10) {
+		boarder = 0.05f;
+		scale = 60;
+	}
+		
 	float* loaded = arr.data<float>();
+	
+	cnpy::NpyArray arr_cluster = cnpy::npy_load(file_cluster);
+	int* loaded_cluster = arr_cluster.data<int>();
 
-	position.resize(nPoint * 3);
 	if (nDim == 7)	// Salt Dissolution
 	{
 		for (int i = 0; i < nPoint; i++) {
-			position[i * 3] = loaded[i * nDim] / 5.0f;	// x: [-5, 5] -> [-1, 1]
-			position[i * 3 + 1] = loaded[i * nDim + 1] / 5.0f;	// y: [-5, 5] -> [-1, 1]
-			position[i * 3 + 2] = (loaded[i * nDim + 2] - 5.0f) / 5.0f;	// z: [0, 10] -> [-1, 1]
+			position.push_back(loaded[i * nDim] / 5.0f);	// x: [-5, 5] -> [-1, 1]
+			position.push_back(loaded[i * nDim + 1] / 5.0f);	// y: [-5, 5] -> [-1, 1]
+			position.push_back((loaded[i * nDim + 2] - 5.0f) / 5.0f);	// z: [0, 10] -> [-1, 1]
+			cluster.push_back(loaded_cluster[i]);
 		}
 	}
 	else if (nDim == 10)	// Dark Sky Simulation
 	{
 		for (int i = 0; i < nPoint; i++) {
-			position[i * 3] = (loaded[i * nDim] - 31.25f) / 31.25f;	// x: [0, 62.5] -> [-1, 1]
-			position[i * 3 + 1] = (loaded[i * nDim + 1] - 31.25f) / 31.25f;	// y: [0, 62.5] -> [-1, 1]
-			position[i * 3 + 2] = (loaded[i * nDim + 2] - 31.25f) / 31.25f;	// z: [0, 62.5] -> [-5, 5]
+			float xPos = (loaded[i] - 31.25f) / 31.25f;
+			if (xPos > 0.95 & xPos <= 1) {
+				position.push_back((loaded[i] - 31.25f) / 31.25f);	// x: [0, 62.5] -> [-1, 1]
+				position.push_back((loaded[nPoint + i] - 31.25f) / 31.25f);	// y: [0, 62.5] -> [-1, 1]
+				position.push_back((loaded[2 * nPoint + i] - 31.25f) / 31.25f);	// z: [0, 62.5] -> [-1, 1]
+				cluster.push_back(loaded_cluster[i]);
+			} 
 		}
+		nPoint = cluster.size();
 	}
-	
-	cnpy::NpyArray arr_cluster = cnpy::npy_load(file_cluster);
-	cluster.resize(nPoint);
-	int* loaded_cluster = arr_cluster.data<int>();
-	for (int i = 0; i < nPoint; i++)
-		cluster[i] = loaded_cluster[i];
 }
 
 void computeNormals() {
@@ -223,22 +235,45 @@ void computeVol() {
 			indexToPointID.push_back(i);
 		}
 	}
-	int outsideIdx = 0;
-	for (int k = 0; k < d - 1; k++) {
-		for (int j = 0; j < h - 1; j++) {
-			for (int i = 0; i < w - 1; i++) {
-				float x = xmin + (float)(i + 0.5) * (xmax - xmin) / (w - 1);
-				float y = ymin + (float)(j + 0.5) * (ymax - ymin) / (h - 1);
-				float z = zmin + (float)(k + 0.5) * (zmax - zmin) / (d - 1);
-				if ((x * x + y * y - range * range) > 0) {
-					cluster.push_back(0);
-					kd_tree_3d.add(point_type::Point3f(x, y, z));
-					indexToPointID.push_back(nPoint + outsideIdx);
-					outsideIdx++;
+	
+	// for salt dissolution  
+	if (nDim == 7)	{
+		int outsideIdx = 0;
+		for (int k = 0; k < d - 1; k++) {
+			for (int j = 0; j < h - 1; j++) {
+				for (int i = 0; i < w - 1; i++) {
+					float x = xmin + (float)(i + 0.5) * (xmax - xmin) / (w - 1);
+					float y = ymin + (float)(j + 0.5) * (ymax - ymin) / (h - 1);
+					float z = zmin + (float)(k + 0.5) * (zmax - zmin) / (d - 1);
+					if ((x * x + y * y - range * range) > 0) {
+						cluster.push_back(-1);
+						kd_tree_3d.add(point_type::Point3f(x, y, z));
+						indexToPointID.push_back(nPoint + outsideIdx);
+						outsideIdx++;
+					}
 				}
 			}
 		}
 	}
+	else if (nDim == 10) {
+		int outsideIdx = 0;
+		for (int k = 0; k < d - 1; k++) {
+			for (int j = 0; j < h - 1; j++) {
+				for (int i = 0; i < w - 1; i++) {
+					float x = xmin + (float)(i + 0.5) * (xmax - xmin) / (w - 1);
+					float y = ymin + (float)(j + 0.5) * (ymax - ymin) / (h - 1);
+					float z = zmin + (float)(k + 0.5) * (zmax - zmin) / (d - 1);
+					if (abs(x) > range || abs(y) > range || abs(z - 0.95) > range * 0.025) {
+						cluster.push_back(-1);
+						kd_tree_3d.add(point_type::Point3f(x, y, z));
+						indexToPointID.push_back(nPoint + outsideIdx);
+						outsideIdx++;
+					}
+				}
+			}
+		}
+	}
+	
 	kd_tree_3d.build();
 
 	for (int k = 0; k < d; k++) {
@@ -252,9 +287,13 @@ void computeVol() {
 				vector<int> indices;
 				vector<float> squared_distances;
 
-				int num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
+				int num_3d;
+				if (nDim == 7)
+					num_3d = kd_tree_3d.radiusSearch(point_to_search, 0.05f, indices, squared_distances);
+				else if (nDim == 10)
+					num_3d = kd_tree_3d.nearestKSearch(point_to_search, 6, indices, squared_distances);
 				float value;
-				if (num_3d == 0)	// outside the circle 
+				if (num_3d == 0)	
 					value = -1.0f;
 				else {
 					// Inverse Distance Weighting (IDW) interpolation
@@ -692,10 +731,10 @@ void drawSurface(Shader ourShader) {
 
 int main()
 {
-	loadPointsFromNpy("run41_025.npy", "run41_025_cluster.npy");
-	//loadPointsFromNpy("cos_49.npy", "cos_49_cluster.npy");
+	//loadPointsFromNpy("run41_025.npy", "run41_025_cluster.npy");
+	loadPointsFromNpy("cos_49.npy", "cos_49_cluster.npy");
 	//computeVol();
-	//initVol();
+	initVol();
 
 	// glfw: initialize and configure
 	// ------------------------------
@@ -738,7 +777,7 @@ int main()
 	Shader surfaceShader("surface.vs", "surface.fs");
 
 	initPointBuffers();
-	//initBuffers();
+	initBuffers();
 
 	// render loop
 	// -----------
@@ -787,8 +826,8 @@ int main()
 		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		
-		drawPoints(pointShader);
-		//drawSurface(surfaceShader);
+		//drawPoints(pointShader);
+		drawSurface(surfaceShader);
 		
 		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
 		// -------------------------------------------------------------------------------
